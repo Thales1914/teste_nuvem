@@ -9,10 +9,8 @@ import numpy as np
 import io
 import streamlit as st
 
-try:
-    DATABASE_URL = st.secrets["postgres"]["db_url"]
-except Exception:
-    DATABASE_URL = "postgres://postgres:Omega2894@localhost:5432/ponto_db"
+
+DATABASE_URL = st.secrets["postgres"]["db_url"]
 
 @contextmanager
 def get_db_connection():

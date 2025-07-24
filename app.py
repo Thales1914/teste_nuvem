@@ -223,7 +223,7 @@ def tela_admin():
                 label="📥 Baixar Relatório Filtrado em Excel",
                 data=excel_buffer,
                 file_name=f"relatorio_ponto_filtrado.xlsx",
-                mime="application/vnd.openxmlformats-officedocument-spreadsheetml.sheet",
+                mime="application/vnd.openxmlformats-officedocument-spreadsheetml-sheet",
                 use_container_width=True
             )
     with tab2:
