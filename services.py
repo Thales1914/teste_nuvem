@@ -12,7 +12,6 @@ import streamlit as st
 try:
     DATABASE_URL = st.secrets["postgres"]["db_url"]
 except Exception:
-
     DATABASE_URL = "postgres://postgres:Omega2894@localhost:5432/ponto_db"
 
 @contextmanager
@@ -44,12 +43,10 @@ def init_db():
                 cursor.executemany("INSERT INTO funcionarios (codigo, nome, senha, role, empresa_id) VALUES (%s, %s, %s, %s, %s)", initial_users)
         conn.commit()
 
-@st.cache_data
 def ler_empresas():
     with get_db_connection() as conn:
         return pd.read_sql_query("SELECT id, nome_empresa FROM empresas ORDER BY nome_empresa", conn)
 
-@st.cache_data
 def ler_funcionarios_df():
     with get_db_connection() as conn:
         query = "SELECT f.codigo, f.nome, f.role, f.empresa_id, e.nome_empresa FROM funcionarios f LEFT JOIN empresas e ON f.empresa_id = e.id"
@@ -97,7 +94,6 @@ def bater_ponto(codigo, nome):
         status_final = " (dentro da tolerância, registrado como 'em ponto')"
     return f"'{proximo_evento}' registado para {nome} às {agora.strftime('%H:%M:%S')}{msg_extra}{status_final}.", "success"
 
-@st.cache_data
 def ler_registros_df():
     with get_db_connection() as conn:
         query = "SELECT r.id, r.codigo_funcionario, r.nome, r.data, r.hora, r.descricao, r.diferenca_min, r.observacao, e.nome_empresa FROM registros r JOIN funcionarios f ON r.codigo_funcionario = f.codigo LEFT JOIN empresas e ON f.empresa_id = e.id"
