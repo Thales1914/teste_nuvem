@@ -7,15 +7,12 @@ import hashlib
 from contextlib import contextmanager
 import numpy as np
 import io
-import streamlit as st
 
-try:
-    DATABASE_URL = st.secrets["postgres"]["db_url"]
-except Exception:
-    DATABASE_URL = "postgres://postgres:Omega2894@localhost:5432/ponto_db"
+DATABASE_URL = "postgres://postgres:Omega2894@localhost:5432/ponto_db"
 
 @contextmanager
 def get_db_connection():
+
     conn = psycopg2.connect(DATABASE_URL)
     try:
         yield conn
