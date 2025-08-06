@@ -3,7 +3,6 @@ import pandas as pd
 import time
 from datetime import date, datetime
 from services import (
-    init_db,
     ler_registros_df,
     bater_ponto,
     verificar_login,
@@ -14,10 +13,10 @@ from services import (
     gerar_relatorio_organizado_df,
     gerar_arquivo_excel,
     ler_empresas,
-    importar_funcionarios_em_massa
+    importar_funcionarios_em_massa,
+    excluir_funcionario
 )
 
-init_db()
 
 st.set_page_config(
     page_title="Ponto Omega",
@@ -60,16 +59,15 @@ def tela_de_login():
         with col2:
             st.image("assets/logo.png", width=350)
             st.text("") 
-            codigo = st.text_input("Seu Código", label_visibility="collapsed", placeholder="Seu Código")
-            senha = st.text_input("Sua Senha", type="password", label_visibility="collapsed", placeholder="Sua Senha")
+            cpf = st.text_input("CPF", label_visibility="collapsed", placeholder="Seu CPF (usuário)")
+            senha = st.text_input("Sua Senha", type="password", label_visibility="collapsed", placeholder="Sua Senha (Código Forte)")
             if st.button("Entrar", type="primary", use_container_width=True):
-                if codigo and senha:
-                    user_info, erro = verificar_login(codigo, senha)
+                if cpf and senha:
+                    user_info, erro = verificar_login(cpf, senha)
                     if erro: 
                         st.error(erro)
                     else:
                         st.session_state.user_info = user_info
-                        st.session_state.user_info['codigo'] = codigo
                         st.rerun()
                 else:
                     st.warning("Por favor, preencha todos os campos.")
@@ -79,15 +77,12 @@ def tela_funcionario():
     tab1, tab2 = st.tabs(["Registrar Ponto", "Meus Registros"])
     with tab1:
         st.header("Registro de Ponto")
-        proximo_evento = obter_proximo_evento(st.session_state.user_info['codigo'])
+        proximo_evento = obter_proximo_evento(st.session_state.user_info['cpf'])
         if proximo_evento == "Jornada Finalizada":
             st.info("Sua jornada de hoje já foi completamente registrada. Bom descanso!")
         else:
             if st.button(f"Confirmar {proximo_evento}", type="primary", use_container_width=True):
-                mensagem, tipo = bater_ponto(
-                    st.session_state.user_info['codigo'],
-                    st.session_state.user_info['nome']
-                )
+                mensagem, tipo = bater_ponto(st.session_state.user_info['cpf'], st.session_state.user_info['nome'])
                 if tipo == "success":
                     st.success(mensagem)
                     time.sleep(1)
@@ -97,7 +92,7 @@ def tela_funcionario():
     with tab2:
         st.header("Histórico dos Meus Pontos")
         df_todos_registros = ler_registros_df()
-        meus_registros_df = df_todos_registros[df_todos_registros['Código'] == st.session_state.user_info['codigo']]
+        meus_registros_df = df_todos_registros[df_todos_registros['Código Forte'] == st.session_state.user_info['codigo']]
         if meus_registros_df.empty:
             st.info("Você ainda não possui registros de ponto.")
         else:
@@ -126,53 +121,66 @@ def tela_admin():
         st.session_state.status_message = None
 
     tab1, tab2, tab3, tab4 = st.tabs(["Relatório de Pontos", "Cadastrar Funcionário", "Visualizar Funcionários", "Importar Funcionários"])
+    
     with tab1:
         st.header("Filtros do Relatório")
+        
+        funcionarios_df = ler_funcionarios_df()
         empresas_df = ler_empresas()
-        opcoes_empresas = {0: "Todas as Empresas"}
-        opcoes_empresas.update(dict(zip(empresas_df['id'], empresas_df['nome_empresa'])))
-        col1_filtros, col2_filtros, col3_filtros = st.columns(3)
+        
+        col1_filtros, col2_filtros, col3_filtros, col4_filtros = st.columns(4)
+        
         with col1_filtros:
-            empresa_selecionada_id = st.selectbox(
-                "Filtrar por empresa:",
-                options=list(opcoes_empresas.keys()),
-                format_func=lambda x: opcoes_empresas[x]
-            )
+            opcoes_empresas = {0: "Todas as Empresas"}
+            opcoes_empresas.update(dict(zip(empresas_df['id'], empresas_df['nome_empresa'])))
+            empresa_selecionada_id = st.selectbox("Filtrar por empresa:", options=list(opcoes_empresas.keys()), format_func=lambda x: opcoes_empresas[x])
+
         with col2_filtros:
-            data_inicio = st.date_input("Data Início", value=date.today().replace(day=1), format="DD/MM/YYYY")
+            if empresa_selecionada_id != 0:
+                funcionarios_da_empresa = funcionarios_df[funcionarios_df['empresa_id'] == empresa_selecionada_id]
+            else:
+                funcionarios_da_empresa = funcionarios_df[funcionarios_df['role'] == 'employee']
+            
+            filiais = sorted(funcionarios_da_empresa['filial'].dropna().unique())
+            filial_selecionada = st.selectbox("Filtrar por filial:", options=["Todas as Filiais"] + filiais)
+
         with col3_filtros:
+            if filial_selecionada != "Todas as Filiais":
+                funcionarios_da_filial = funcionarios_da_empresa[funcionarios_da_empresa['filial'] == filial_selecionada]
+            else:
+                funcionarios_da_filial = funcionarios_da_empresa
+
+            setores = sorted(funcionarios_da_filial['tipo'].dropna().unique())
+            setor_selecionado = st.selectbox("Filtrar por setor:", options=["Todos os Setores"] + setores)
+        
+        with col4_filtros:
+            data_inicio = st.date_input("Data Início", value=date.today().replace(day=1), format="DD/MM/YYYY")
             data_fim = st.date_input("Data Fim", value=date.today(), format="DD/MM/YYYY")
+        
         st.divider()
         st.header("Relatório de Pontos")
-        funcionarios_df = ler_funcionarios_df()
+
         df_registros = ler_registros_df()
-        if empresa_selecionada_id != 0:
-            df_filtrado_empresa = df_registros[df_registros['Empresa'] == opcoes_empresas[empresa_selecionada_id]]
-        else:
-            df_filtrado_empresa = df_registros.copy()
-            
-        df_filtrado_empresa['Data_dt'] = pd.to_datetime(df_filtrado_empresa['Data'], format='%Y-%m-%d', errors='coerce').dt.date
-        df_filtrado_data = df_filtrado_empresa.dropna(subset=['Data_dt'])
-        df_filtrado_data = df_filtrado_data[(df_filtrado_data['Data_dt'] >= data_inicio) & (df_filtrado_data['Data_dt'] <= data_fim)].copy()
+        df_filtrado = df_registros.copy()
         
-        codigos_da_empresa = funcionarios_df[funcionarios_df['empresa_id'] == empresa_selecionada_id]['codigo'].tolist() if empresa_selecionada_id != 0 else funcionarios_df['codigo'].tolist()
-        opcoes_funcionarios_filtrados = {"Todos": "Todos"}
-        for _, row in funcionarios_df[funcionarios_df['codigo'].isin(codigos_da_empresa)].iterrows():
-            opcoes_funcionarios_filtrados[row['codigo']] = f"{row['nome']} (Cód: {row['codigo']})"
+        if empresa_selecionada_id != 0:
+            df_filtrado = df_filtrado[df_filtrado['Empresa'] == opcoes_empresas[empresa_selecionada_id]]
+        if filial_selecionada != "Todas as Filiais":
+            df_filtrado = df_filtrado[df_filtrado['Filial'] == filial_selecionada]
+        if setor_selecionado != "Todos os Setores":
+            df_filtrado = df_filtrado[df_filtrado['Setor'] == setor_selecionado]
             
-        codigo_selecionado = st.selectbox(
-            "Filtrar por funcionário (opcional):",
-            options=list(opcoes_funcionarios_filtrados.keys()),
-            format_func=lambda x: opcoes_funcionarios_filtrados[x]
-        )
-        df_final_filtrado = df_filtrado_data.copy()
-        if codigo_selecionado != "Todos":
-            df_final_filtrado = df_final_filtrado[df_final_filtrado['Código'] == codigo_selecionado]
-        if df_final_filtrado.empty:
+        if not df_filtrado.empty:
+            df_filtrado['Data_dt'] = pd.to_datetime(df_filtrado['Data'], format='%Y-%m-%d', errors='coerce').dt.date
+            df_filtrado = df_filtrado.dropna(subset=['Data_dt'])
+            df_filtrado = df_filtrado[(df_filtrado['Data_dt'] >= data_inicio) & (df_filtrado['Data_dt'] <= data_fim)]
+        
+        if df_filtrado.empty:
             st.info("Nenhum registro encontrado para os filtros selecionados.")
         else:
             st.subheader("Visualização dos Eventos")
-            df_visualizacao = df_final_filtrado.sort_values(by=["Data_dt", "Hora"], ascending=False)
+            df_visualizacao = df_filtrado.sort_values(by=["Data_dt", "Hora"], ascending=False)
+            
             for index, row in df_visualizacao.iterrows():
                 registro_id = row['ID']
                 with st.container(border=True):
@@ -191,19 +199,16 @@ def tela_admin():
                         if st.button("Editar", key=f"edit_{registro_id}"):
                             st.session_state.edit_id = registro_id
                             st.rerun()
+                            
                     if st.session_state.edit_id == registro_id:
                         edit_col1, edit_col2 = st.columns(2)
-                        with edit_col1:
-                            novo_horario = st.text_input("Nova Hora (HH:MM:SS):", value=row['Hora'], key=f"hora_{registro_id}")
-                        with edit_col2:
-                            nova_obs = st.text_area("Observação:", value=row.get('Observação', ''), key=f"obs_{registro_id}")
+                        with edit_col1: novo_horario = st.text_input("Nova Hora (HH:MM:SS):", value=row['Hora'], key=f"hora_{registro_id}")
+                        with edit_col2: nova_obs = st.text_area("Observação:", value=row.get('Observação', ''), key=f"obs_{registro_id}")
                         col_save, col_cancel, _ = st.columns([1, 1, 5])
                         if col_save.button("Salvar", key=f"save_{registro_id}", type="primary"):
-                            horario_mudou = novo_horario.strip() != row['Hora'].strip()
-                            obs_mudou = nova_obs.strip() != str(row.get('Observação', '')).strip()
+                            horario_mudou, obs_mudou = novo_horario.strip() != row['Hora'].strip(), nova_obs.strip() != str(row.get('Observação', '')).strip()
                             if horario_mudou or obs_mudou:
-                                horario_para_atualizar = novo_horario.strip() if horario_mudou else None
-                                obs_para_atualizar = nova_obs.strip() if obs_mudou else None
+                                horario_para_atualizar, obs_para_atualizar = (novo_horario.strip() if horario_mudou else None), (nova_obs.strip() if obs_mudou else None)
                                 msg, tipo = atualizar_registro(registro_id, novo_horario=horario_para_atualizar, nova_observacao=obs_para_atualizar)
                                 st.session_state.status_message = (msg, tipo)
                             st.session_state.edit_id = None
@@ -211,77 +216,108 @@ def tela_admin():
                         if col_cancel.button("Cancelar", key=f"cancel_{registro_id}"):
                             st.session_state.edit_id = None
                             st.rerun()
-                    elif row.get('Observação'):
-                        st.markdown(f"**Obs:** *{row['Observação']}*")
+                    elif row.get('Observação'): st.markdown(f"**Obs:** *{row['Observação']}*")
+            
             st.divider()
             st.subheader("Exportar Relatório Completo")
-            df_organizado = gerar_relatorio_organizado_df(df_final_filtrado)
-            df_bruto = df_final_filtrado.sort_values(by=["Data_dt", "Hora"]).copy()
+            
+            if empresa_selecionada_id != 0:
+                empresa_info = empresas_df[empresas_df['id'] == empresa_selecionada_id].iloc[0]
+                nome_empresa_relatorio = empresa_info['nome_empresa']
+                cnpj_relatorio = empresa_info['cnpj']
+            else:
+                nome_empresa_relatorio = "Todas as Empresas"
+                cnpj_relatorio = None
+
+            df_organizado = gerar_relatorio_organizado_df(df_filtrado)
+            df_bruto = df_filtrado.sort_values(by=["Data_dt", "Hora"]).copy()
             df_bruto['Data'] = pd.to_datetime(df_bruto['Data']).dt.strftime('%d/%m/%Y')
-            excel_buffer = gerar_arquivo_excel(df_organizado, df_bruto.drop(columns=['Data_dt']))
-            st.download_button(
-                label="📥 Baixar Relatório Filtrado em Excel",
-                data=excel_buffer,
-                file_name=f"relatorio_ponto_filtrado.xlsx",
-                mime="application/vnd.openxmlformats-officedocument-spreadsheetml.sheet",
-                use_container_width=True
-            )
+            
+            excel_buffer = gerar_arquivo_excel(df_organizado, df_bruto.drop(columns=['Data_dt']), nome_empresa_relatorio, cnpj_relatorio, data_inicio, data_fim)
+            
+            st.download_button(label="📥 Baixar Relatório Filtrado em Excel", data=excel_buffer, file_name=f"relatorio_ponto_filtrado.xlsx", mime="application/vnd.openxmlformats-officedocument-spreadsheetml.sheet", use_container_width=True)
+
     with tab2:
         st.header("Cadastrar Novo Funcionário")
-        empresas_df_cadastro = ler_empresas()
-        empresas_para_cadastro = dict(zip(empresas_df_cadastro['id'], empresas_df_cadastro['nome_empresa']))
         with st.form("add_employee_form", clear_on_submit=True):
-            empresa_id_cadastro = st.selectbox("Empresa do Funcionário", options=list(empresas_para_cadastro.keys()), format_func=lambda x: empresas_para_cadastro[x])
-            novo_codigo = st.text_input("Código do Funcionário (único)")
+            cpf = st.text_input("CPF do Funcionário (será o usuário)")
+            novo_codigo = st.text_input("Código Forte (será a senha)")
             novo_nome = st.text_input("Nome Completo")
-            nova_senha = st.text_input("Senha Provisória", type="password")
+            nome_empresa = st.text_input("Nome da Empresa")
+            cnpj = st.text_input("CNPJ da Empresa")
+            filial = st.text_input("Filial (ex: Matriz, Filial 02)")
+            cod_tipo = st.text_input("Código do Setor")
+            tipo = st.text_input("Nome do Setor")
             submitted = st.form_submit_button("Adicionar Funcionário")
             if submitted:
-                msg, tipo = adicionar_funcionario(novo_codigo.strip(), novo_nome.strip(), nova_senha, empresa_id_cadastro)
+                msg, tipo = adicionar_funcionario(
+                    novo_codigo.strip(), novo_nome.strip(), nome_empresa.strip(),
+                    cnpj.strip(), cpf.strip(), cod_tipo.strip(), tipo.strip(), filial.strip()
+                )
                 st.session_state.status_message = (msg, tipo)
                 st.rerun()
+
     with tab3:
         st.header("Funcionários Cadastrados no Sistema")
         todos_funcionarios_df = ler_funcionarios_df()
         df_exibicao = todos_funcionarios_df[todos_funcionarios_df['role'] == 'employee']
         if df_exibicao.empty:
-            st.info("Nenhum funcionário cadastrado no sistema (além do administrador).")
+            st.info("Nenhum funcionário cadastrado no sistema.")
         else:
-            df_final = df_exibicao[['codigo', 'nome', 'nome_empresa']].rename(columns={'codigo': 'Código', 'nome': 'Nome', 'nome_empresa': 'Empresa'})
-            st.dataframe(df_final, use_container_width=True, hide_index=True)
+            df_final = df_exibicao[['cpf', 'codigo', 'nome', 'nome_empresa', 'filial', 'tipo']].rename(columns={
+                'cpf': 'CPF (Usuário)', 'codigo': 'CodForte (Senha)', 'nome': 'Nome', 
+                'nome_empresa': 'Empresa', 'filial': 'Filial', 'tipo': 'Setor'
+            })
             
+            df_final_com_acao = df_final.copy()
+            df_final_com_acao['Ação'] = False
+            
+            edited_df = st.data_editor(
+                df_final_com_acao,
+                column_config={"Ação": st.column_config.CheckboxColumn("Excluir?", default=False)},
+                hide_index=True, use_container_width=True,
+                disabled=['CPF (Usuário)', 'CodForte (Senha)', 'Nome', 'Empresa', 'Filial', 'Setor']
+            )
+            funcionario_para_excluir = edited_df[edited_df["Ação"]]
+            if not funcionario_para_excluir.empty:
+                nome_para_excluir = funcionario_para_excluir.iloc[0]['Nome']
+                cpf_para_excluir = funcionario_para_excluir.iloc[0]['CPF (Usuário)']
+                st.warning(f"Você tem certeza que deseja excluir **{nome_para_excluir}** (CPF: {cpf_para_excluir})?")
+                col1, col2, _ = st.columns([1, 1, 4])
+                with col1:
+                    if st.button("Sim, excluir", type="primary", use_container_width=True):
+                        msg, tipo = excluir_funcionario(cpf_para_excluir)
+                        st.session_state.status_message = (msg, tipo)
+                        st.rerun()
+                with col2:
+                    if st.button("Cancelar", use_container_width=True):
+                        st.rerun()
+
     with tab4:
         st.header("Importar Funcionários em Lote via CSV")
-        st.info("O arquivo CSV precisa conter as colunas: `MATRICULA`, `COLABORADOR` e `SENHA`.")
-        empresas_df_import = ler_empresas()
-        empresas_para_import = dict(zip(empresas_df_import['id'], empresas_df_import['nome_empresa']))
-        empresa_id_importacao = st.selectbox("Selecione a empresa para qual estes funcionários serão importados:", options=list(empresas_para_import.keys()), format_func=lambda x: empresas_para_import[x], key="empresa_import")
+        st.info("O arquivo CSV precisa ter as colunas: `Arquivo`, `Empresa`, `CNPJ`, `CodTipo`, `Tipo`, `CodForte`, `Nome` e `CPF`. O CPF será o usuário e o Código Forte a senha.")
         arquivo_csv = st.file_uploader("Selecione o arquivo CSV", type=["csv"])
         if st.button("Iniciar Importação", type="primary", use_container_width=True):
-            if arquivo_csv is not None and empresa_id_importacao is not None:
-                with st.spinner("Processando arquivo..."):
+            if arquivo_csv:
+                with st.spinner("Processando..."):
                     try:
-                        df_para_importar = pd.read_csv(arquivo_csv, sep=';', encoding='latin-1')
+                        df_para_importar = pd.read_csv(arquivo_csv, sep=';', encoding='latin-1', dtype=str)
                         df_para_importar.columns = [col.strip().upper() for col in df_para_importar.columns]
-                        sucesso, ignorados, erros = importar_funcionarios_em_massa(df_para_importar, empresa_id_importacao)
-                        st.success(f"{sucesso} funcionários importados com sucesso!")
-                        if ignorados > 0:
-                            st.warning(f"{ignorados} funcionários foram ignorados (matrícula já existente).")
+                        sucesso, ignorados, erros = importar_funcionarios_em_massa(df_para_importar)
+                        st.success(f"{sucesso} funcionários importados!")
+                        if ignorados: st.warning(f"{ignorados} ignorados (CPF já existe).")
                         if erros:
-                            st.error("Ocorreram os seguintes erros durante a importação:")
-                            for erro in erros:
-                                st.code(erro)
+                            st.error("Ocorreram erros:")
+                            for erro in erros: st.code(erro)
                     except Exception as e:
-                        st.error(f"Não foi possível ler o arquivo. Verifique se o formato está correto. Erro: {e}")
+                        st.error(f"Erro ao ler o arquivo: {e}")
             else:
-                st.warning("Por favor, selecione uma empresa e um arquivo CSV para continuar.")
+                st.warning("Por favor, selecione um arquivo CSV.")
 
 if st.session_state.user_info:
     st.sidebar.image("assets/logo.png", use_container_width=True)
     if st.sidebar.button("Sair"):
-        st.session_state.user_info = None
-        st.session_state.edit_id = None
-        st.session_state.status_message = None
+        st.session_state.clear()
         st.rerun()
     if st.session_state.user_info.get("role") == "admin":
         tela_admin()
